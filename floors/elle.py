@@ -173,6 +173,108 @@ class TiredStudent:
             surf.blit(self.shout, (bubble.x + 6, bubble.y + 4))
 
 
+class SodaCan:
+    """The vending machine in the hallway is broken: it spits out a soda can that rolls along the floor.
+    Jump over it. A can rolls from x_start toward left_end, then waits for the next launch."""
+
+    W = H = 12
+
+    def __init__(self, x_start, left_end, speed=150.0, period=3.2, offset=0.0):
+        self.x_start, self.left_end, self.speed, self.period = x_start, left_end, speed, period
+        self.t = offset
+        self.dir = -1                                  # it moves (the check reads .dir)
+        self.rect = pygame.Rect(-100, -100, self.W, self.H)
+        self.active = False
+
+    def update(self, dt, room, player):
+        self.t += dt
+        x = self.x_start - (self.t % self.period) * self.speed
+        self.active = x > self.left_end
+        if self.active:
+            self.rect.topleft = (int(x), C.FLOOR_Y - self.H)
+        else:
+            self.rect.topleft = (-100, -100)
+
+    def draw(self, surf):
+        if not self.active:
+            return
+        r = self.rect
+        pygame.draw.rect(surf, (210, 50, 50), r, border_radius=3)
+        spin = int(self.t * 20) % 3                      # the stripe spins as it rolls
+        pygame.draw.line(surf, (240, 240, 240), (r.left + 3 + spin * 3, r.top + 1), (r.left + 3 + spin * 3, r.bottom - 2), 2)
+        pygame.draw.rect(surf, C.INK, r, 1, border_radius=3)
+
+
+class WetFloor:
+    """A freshly mopped puddle: on it you keep sliding the way you face. Doesn't hurt, but the bot does."""
+
+    SLIDE = 170.0
+
+    def __init__(self, x_left, x_right):
+        self.x_left, self.x_right = int(x_left), int(x_right)
+        self.rect = pygame.Rect(-200, -200, 1, 1)       # harmless: it only makes you slide
+        w = self.x_right - self.x_left
+        self.puddle = pygame.Surface((w, 14), pygame.SRCALPHA)
+        pygame.draw.ellipse(self.puddle, (120, 190, 255, 110), (0, 0, w, 14))
+        self.font_sign = pygame.font.Font(None, 16).render("WET", True, C.INK)
+
+    def update(self, dt, room, player):
+        if player is None or player.on is not room.ground:
+            return
+        if self.x_left < player.rect.centerx < self.x_right:
+            player.x += player.facing * self.SLIDE * dt
+            player.x = max(4.0, min(C.W - player.W - 4.0, player.x))
+
+    def draw(self, surf):
+        surf.blit(self.puddle, (self.x_left, C.FLOOR_Y - 6))
+        sx, y = self.x_left - 18, C.FLOOR_Y                # the yellow caution sign
+        pygame.draw.polygon(surf, (250, 210, 50), [(sx, y), (sx + 9, y - 34), (sx + 18, y)])
+        pygame.draw.polygon(surf, C.INK, [(sx, y), (sx + 9, y - 34), (sx + 18, y)], 2)
+        surf.blit(self.font_sign, (sx + 9 - self.font_sign.get_width() // 2, y - 16))
+
+
+class SteamVent:
+    """An overheating server vents steam: it puffs as a warning, then blasts a column of steam."""
+
+    WARN, BLAST, REST = 0.7, 1.0, 1.6
+
+    def __init__(self, x, top=300, offset=0.0):
+        self.x, self.top = int(x), int(top)
+        self.t = offset
+        self.rect = pygame.Rect(-200, -200, 1, 1)
+        self.phase = "rest"
+        self.puff = pygame.Surface((40, 40), pygame.SRCALPHA)
+        pygame.draw.circle(self.puff, (225, 230, 240, 120), (20, 20), 18)
+
+    def update(self, dt, room, player):
+        self.t = (self.t + dt) % (self.WARN + self.BLAST + self.REST)
+        if self.t < self.WARN:
+            self.phase = "warn"
+        elif self.t < self.WARN + self.BLAST:
+            self.phase = "blast"
+        else:
+            self.phase = "rest"
+        if self.phase == "blast":
+            self.rect = pygame.Rect(self.x - 14, self.top, 28, C.FLOOR_Y - self.top)
+        else:
+            self.rect = pygame.Rect(-200, -200, 1, 1)
+
+    def draw(self, surf):
+        grate = pygame.Rect(self.x - 18, C.FLOOR_Y - 6, 36, 6)
+        hot = self.phase != "rest"
+        pygame.draw.rect(surf, (200, 90, 50) if hot else (80, 84, 96), grate)
+        for gx in range(grate.left + 4, grate.right, 7):
+            pygame.draw.line(surf, C.INK, (gx, grate.top), (gx, grate.bottom), 1)
+        if self.phase == "warn":
+            k = self.t / self.WARN
+            surf.blit(self.puff, (self.x - 20, C.FLOOR_Y - 30 - int(20 * k)))
+        elif self.phase == "blast":
+            wob = pygame.time.get_ticks() // 60
+            for i, y in enumerate(range(C.FLOOR_Y - 30, self.top - 20, -26)):
+                dx = ((wob + i) % 3 - 1) * 4
+                surf.blit(self.puff, (self.x - 20 + dx, y))
+
+
 class CodeRainRoom(Room):
     """A room whose wall is hacker-style code rain. Every room on this floor uses it:
     subclass it and call self.build_code_rain() at the end of build()."""
@@ -221,7 +323,7 @@ class CodeRainRoom(Room):
 
 
 class Hallway(CodeRainRoom):
-    """Off the West elevator: lockers, a vending machine, and a patrol bot by the lab door."""
+    """Off the West elevator: a broken vending machine spitting soda cans, a wet floor, and a patrol bot."""
 
     title = "Floor 7: Hallway"
 
@@ -231,7 +333,10 @@ class Hallway(CodeRainRoom):
         self.platforms.append(Platform(250, 400, 160))          # a bench to hop onto, away from the bot
         self.furniture += [Plant(110, C.FLOOR_Y), VendingMachine(440, C.FLOOR_Y),
                            Locker(650, C.FLOOR_Y), Locker(700, C.FLOOR_Y), Locker(750, C.FLOOR_Y)]
-        self.hazards.append(PatrolBot(500, C.FLOOR_Y, left=200, right=820, speed=85))
+        self.hazards.append(PatrolBot(500, C.FLOOR_Y, left=200, right=820, speed=75))
+        # the broken vending machine spits soda cans that roll toward the West elevator: jump them
+        self.hazards += [SodaCan(430, 120, offset=0.0), SodaCan(430, 120, offset=1.6)]
+        self.hazards.append(WetFloor(560, 645))                 # just mopped: you slide on it
         self.build_code_rain()
 
 
@@ -255,7 +360,7 @@ class ComputerLab(CodeRainRoom):
 
 
 class ServerCloset(CodeRainRoom):
-    """By the East elevator: racks, a floor laser, and a crusher before the elevator."""
+    """By the East elevator: a steam vent between the racks, a floor laser, and a crusher before the elevator."""
 
     title = "Floor 7: Server Closet"
 
@@ -263,9 +368,10 @@ class ServerCloset(CodeRainRoom):
         self.decor += [Sign(370, 46, "SERVER CLOSET"), CeilingLight(480),
                        Poster(120, 90, "NO FOOD", (200, 70, 60))]
         self.platforms.append(Platform(500, 400, 200))
-        self.furniture += [ServerRack(150, C.FLOOR_Y), ServerRack(220, C.FLOOR_Y), ServerRack(290, C.FLOOR_Y),
+        self.furniture += [ServerRack(120, C.FLOOR_Y), ServerRack(180, C.FLOOR_Y), ServerRack(310, C.FLOOR_Y),
                            ServerRack(560, 400), ServerRack(630, 400)]
-        self.hazards.append(FloorLaser(340, 480, on_time=1.2, off_time=1.6))
+        self.hazards.append(SteamVent(270, top=300))           # an overheating rack: wait for the puff, then go
+        self.hazards.append(FloorLaser(380, 480, on_time=1.2, off_time=1.6))
         self.hazards.append(Crusher(740, y_top=250, y_bottom=C.FLOOR_Y, w=60, h=50))
         self.build_code_rain()
 
