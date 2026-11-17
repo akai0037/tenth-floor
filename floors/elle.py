@@ -234,17 +234,23 @@ class WetFloor:
 
 
 class SteamVent:
-    """An overheating server vents steam: it puffs as a warning, then blasts a column of steam."""
+    """An overheating server vents steam. It puffs as a warning, then blasts a column of steam that
+    LAUNCHES you straight up (it doesn't hurt). Ride it up to the high cable trays.
 
-    WARN, BLAST, REST = 0.7, 1.0, 1.6
+    x: the vent's centre. surface: the floor or ledge it sits in. height: how tall the column is.
+    launch: how hard it throws you (about 870 reaches 250 px up).
+    """
 
-    def __init__(self, x, top=300, offset=0.0):
-        self.x, self.top = int(x), int(top)
+    WARN, BLAST, REST = 0.6, 1.2, 1.4
+
+    def __init__(self, x, surface=C.FLOOR_Y, height=200, launch=870.0, offset=0.0):
+        self.x, self.surface, self.height, self.launch = int(x), int(surface), int(height), float(launch)
         self.t = offset
+        self.dir = 0                                   # never hurts; the check reads .dir
         self.rect = pygame.Rect(-200, -200, 1, 1)
         self.phase = "rest"
         self.puff = pygame.Surface((40, 40), pygame.SRCALPHA)
-        pygame.draw.circle(self.puff, (225, 230, 240, 120), (20, 20), 18)
+        pygame.draw.circle(self.puff, (225, 235, 245, 130), (20, 20), 18)
 
     def update(self, dt, room, player):
         self.t = (self.t + dt) % (self.WARN + self.BLAST + self.REST)
@@ -254,26 +260,30 @@ class SteamVent:
             self.phase = "blast"
         else:
             self.phase = "rest"
-        if self.phase == "blast":
-            self.rect = pygame.Rect(self.x - 14, self.top, 28, C.FLOOR_Y - self.top)
-        else:
-            self.rect = pygame.Rect(-200, -200, 1, 1)
+        if self.phase != "blast" or player is None:
+            return
+        pr = player.rect
+        in_column = abs(pr.centerx - self.x) < 20 and self.surface - self.height - 20 < pr.bottom <= self.surface + 2
+        if in_column and player.vy > -self.launch * 0.5:   # one big push each time you step in
+            player.vy = -self.launch
+            player.on = None
 
     def draw(self, surf):
-        grate = pygame.Rect(self.x - 18, C.FLOOR_Y - 6, 36, 6)
+        grate = pygame.Rect(self.x - 18, self.surface - 6, 36, 6)
         hot = self.phase != "rest"
-        pygame.draw.rect(surf, (200, 90, 50) if hot else (80, 84, 96), grate)
+        pygame.draw.rect(surf, (230, 120, 60) if hot else (80, 84, 96), grate)
         for gx in range(grate.left + 4, grate.right, 7):
             pygame.draw.line(surf, C.INK, (gx, grate.top), (gx, grate.bottom), 1)
+        pygame.draw.polygon(surf, (250, 210, 50), [(self.x - 6, self.surface - 10), (self.x + 6, self.surface - 10),
+                                                   (self.x, self.surface - 18)])   # an up arrow on the vent
         if self.phase == "warn":
             k = self.t / self.WARN
-            surf.blit(self.puff, (self.x - 20, C.FLOOR_Y - 30 - int(20 * k)))
+            surf.blit(self.puff, (self.x - 20, self.surface - 30 - int(20 * k)))
         elif self.phase == "blast":
             wob = pygame.time.get_ticks() // 60
-            for i, y in enumerate(range(C.FLOOR_Y - 30, self.top - 20, -26)):
+            for i, y in enumerate(range(self.surface - 30, self.surface - self.height - 20, -24)):
                 dx = ((wob + i) % 3 - 1) * 4
                 surf.blit(self.puff, (self.x - 20 + dx, y))
-
 
 class CodeRainRoom(Room):
     """A room whose wall is hacker-style code rain. Every room on this floor uses it:
@@ -360,20 +370,27 @@ class ComputerLab(CodeRainRoom):
 
 
 class ServerCloset(CodeRainRoom):
-    """By the East elevator: a steam vent between the racks, a floor laser, and a crusher before the elevator."""
+    """By the East elevator. On the floor: racks, a floor laser and a crusher. Or go over the top:
+    steam vents launch you up to the cable trays, and you drop down past the crusher to the elevator."""
 
     title = "Floor 7: Server Closet"
 
     def build(self):
         self.decor += [Sign(370, 46, "SERVER CLOSET"), CeilingLight(480),
-                       Poster(120, 90, "NO FOOD", (200, 70, 60))]
-        self.platforms.append(Platform(500, 400, 200))
+                       Poster(120, 90, "NO FOOD", (200, 70, 60)), Poster(860, 300, "HOT!", (230, 120, 60), w=60, h=70)]
+        # the high route: vent -> left tray -> middle tray ... rack shelf -> vent -> top tray -> drop to the elevator
+        self.platforms.append(Platform(200, 280, 170))        # left cable tray (vent A throws you up here)
+        self.platforms.append(Platform(420, 250, 100))        # middle cable tray, a jump across
+        self.platforms.append(Platform(500, 405, 200))        # the rack shelf
+        self.platforms.append(Platform(600, 160, 200))        # top cable tray (vent B throws you up here)
         self.furniture += [ServerRack(120, C.FLOOR_Y), ServerRack(180, C.FLOOR_Y), ServerRack(310, C.FLOOR_Y),
-                           ServerRack(560, 400), ServerRack(630, 400)]
-        self.hazards.append(SteamVent(270, top=300))           # an overheating rack: wait for the puff, then go
-        self.hazards.append(FloorLaser(380, 480, on_time=1.2, off_time=1.6))
+                           ServerRack(560, 405), FilingCabinet(250, 280, "spare parts"),
+                           ServerRack(720, 160, "backup rack")]
+        self.hazards.append(SteamVent(270, C.FLOOR_Y, height=230))                   # vent A, on the floor
+        self.hazards.append(SteamVent(650, 405, height=255, launch=900, offset=1.3))  # vent B, on the rack shelf
+        self.hazards.append(SteamVent(475, C.FLOOR_Y, height=150, launch=700, offset=0.7))  # a small hop up to the rack shelf
+        self.hazards.append(FloorLaser(370, 430, on_time=1.2, off_time=1.6))
         self.hazards.append(Crusher(740, y_top=250, y_bottom=C.FLOOR_Y, w=60, h=50))
         self.build_code_rain()
-
 
 ROOMS = [Hallway, ComputerLab, ServerCloset]
